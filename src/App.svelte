@@ -13,7 +13,7 @@
 
   let initializing = $state(true);
 
-  const pages: Record<Route, typeof Landing> = {
+  const pages: Record<Route, any> = {
     landing: Landing,
     login: Login,
     register: Register,
