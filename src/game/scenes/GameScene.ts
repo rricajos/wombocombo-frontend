@@ -2,11 +2,11 @@ import Phaser from "phaser";
 import { Player } from "../entities/Player";
 import { InputManager } from "../systems/InputManager";
 import { NetworkSync } from "../systems/NetworkSync";
-import { PHYSICS } from "../config/physics";
 import { socket } from "$lib/network/socket";
 import { onGameEvent } from "$lib/network/handler";
 import { authStore } from "$lib/stores/auth.svelte";
 import { gameStore } from "$lib/stores/game.svelte";
+import { settingsStore } from "$lib/stores/settings.svelte";
 import type { ServerMessage } from "$lib/network/messages";
 
 /**
@@ -20,6 +20,8 @@ export class GameScene extends Phaser.Scene {
   private platforms!: Phaser.Physics.Arcade.StaticGroup;
   private unsubGameEvents?: () => void;
   private fpsText?: Phaser.GameObjects.Text;
+  private tickText?: Phaser.GameObjects.Text;
+  private inputSendTimer: number = 0;
 
   constructor() {
     super({ key: "GameScene" });
@@ -27,6 +29,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     const playerId = authStore.player?.id ?? "local";
+    const displayName = authStore.player?.display_name ?? "Player";
 
     // World bounds
     this.physics.world.setBounds(0, 0, 1280, 720);
@@ -34,17 +37,18 @@ export class GameScene extends Phaser.Scene {
     // Build placeholder level
     this.buildPlaceholderLevel();
 
-    // Create local player
-    const spawnX = 200;
+    // Create local player with name
+    const spawnX = 200 + Math.random() * 200;
     const spawnY = 500;
-    this.localPlayer = new Player(this, spawnX, spawnY);
+    this.localPlayer = new Player(this, spawnX, spawnY, displayName);
 
     // Collide player with platforms
     this.physics.add.collider(this.localPlayer, this.platforms);
 
     // Camera follows player
-    this.cameras.main.startFollow(this.localPlayer, true, 0.1, 0.1);
+    this.cameras.main.startFollow(this.localPlayer, true, 0.08, 0.08);
     this.cameras.main.setBounds(0, 0, 1280, 720);
+    this.cameras.main.setDeadzone(80, 40);
 
     // Input
     this.inputManager = new InputManager(this);
@@ -60,27 +64,32 @@ export class GameScene extends Phaser.Scene {
     // Update game store
     gameStore.phase = "playing";
 
-    // FPS counter (debug)
+    // Debug text
     this.fpsText = this.add
-      .text(8, 8, "", {
-        fontSize: "12px",
-        fontFamily: "monospace",
-        color: "#00ff00",
-      })
+      .text(8, 8, "", { fontSize: "10px", fontFamily: "monospace", color: "#33cc33" })
+      .setScrollFactor(0)
+      .setDepth(100);
+
+    this.tickText = this.add
+      .text(8, 22, "", { fontSize: "10px", fontFamily: "monospace", color: "#888888" })
       .setScrollFactor(0)
       .setDepth(100);
   }
 
-  update(_time: number, _delta: number): void {
+  update(_time: number, delta: number): void {
     // 1. Read input
     const actions = this.inputManager.getActions();
 
-    // 2. Apply to local player
+    // 2. Apply to local player (client-side authority)
     this.localPlayer.applyActions(actions);
 
-    // 3. Send input to server
-    if (actions.length > 0) {
+    // 3. Send input to server at ~20Hz (every 50ms), not every frame
+    this.inputSendTimer += delta;
+    if (this.inputSendTimer >= 50) {
+      this.inputSendTimer = 0;
       this.localTick++;
+
+      // Always send tick, even if no actions (server needs heartbeat)
       socket.send({
         type: "player_input",
         tick: this.localTick,
@@ -91,9 +100,15 @@ export class GameScene extends Phaser.Scene {
     // 4. Interpolate remote entities
     this.networkSync.update();
 
-    // 5. Update FPS display
-    if (this.fpsText) {
-      this.fpsText.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
+    // 5. Debug display
+    if (settingsStore.showFPS) {
+      this.fpsText?.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
+      this.fpsText?.setVisible(true);
+      this.tickText?.setText(`Tick: ${this.localTick} | Server: ${gameStore.serverTick}`);
+      this.tickText?.setVisible(true);
+    } else {
+      this.fpsText?.setVisible(false);
+      this.tickText?.setVisible(false);
     }
   }
 
@@ -106,9 +121,8 @@ export class GameScene extends Phaser.Scene {
 
       case "player_hit":
         if (msg.player_id === (authStore.player?.id ?? "local")) {
-          this.cameras.main.shake(100, 0.005);
-          this.localPlayer.setTint(0xff8888);
-          this.time.delayedCall(150, () => this.localPlayer.clearTint());
+          this.cameras.main.shake(120, 0.006);
+          this.localPlayer.flashDamage();
         }
         this.networkSync.handleMessage(msg);
         break;
@@ -116,6 +130,8 @@ export class GameScene extends Phaser.Scene {
       case "player_death":
         if (msg.player_id === (authStore.player?.id ?? "local")) {
           this.localPlayer.die();
+          // Zoom out slightly on death to see more
+          this.cameras.main.zoomTo(0.9, 500);
         }
         this.networkSync.handleMessage(msg);
         break;
@@ -123,6 +139,7 @@ export class GameScene extends Phaser.Scene {
       case "player_respawn":
         if (msg.player_id === (authStore.player?.id ?? "local")) {
           this.localPlayer.respawn(msg.x, msg.y);
+          this.cameras.main.zoomTo(1, 300);
         }
         this.networkSync.handleMessage(msg);
         break;
@@ -133,18 +150,15 @@ export class GameScene extends Phaser.Scene {
         break;
 
       default:
-        // Forward all other messages to NetworkSync
         this.networkSync.handleMessage(msg);
     }
   }
 
   /**
-   * Build a simple test level with platforms.
-   * Replaced by tilemap loading in Phase 3.
+   * Placeholder level with platforms.
    */
   private buildPlaceholderLevel(): void {
-    // Background
-    this.cameras.main.setBackgroundColor(0x1a1a2e);
+    this.cameras.main.setBackgroundColor(0x12122a);
 
     this.platforms = this.physics.add.staticGroup();
 
@@ -153,14 +167,27 @@ export class GameScene extends Phaser.Scene {
       this.platforms.create(x + 16, 704, "tile_ground");
     }
 
-    // Platforms
+    // Platforms — designed for fun movement
     const platformPositions = [
-      { x: 300, y: 560, w: 5 },
-      { x: 600, y: 440, w: 4 },
-      { x: 200, y: 340, w: 3 },
-      { x: 800, y: 340, w: 5 },
-      { x: 500, y: 240, w: 3 },
-      { x: 1000, y: 520, w: 4 },
+      // Lower platforms
+      { x: 160, y: 600, w: 4 },
+      { x: 500, y: 580, w: 3 },
+      { x: 900, y: 600, w: 4 },
+
+      // Mid platforms
+      { x: 300, y: 480, w: 5 },
+      { x: 700, y: 460, w: 4 },
+      { x: 1050, y: 490, w: 3 },
+
+      // Upper platforms
+      { x: 150, y: 350, w: 3 },
+      { x: 480, y: 340, w: 4 },
+      { x: 800, y: 330, w: 5 },
+
+      // Top platforms
+      { x: 350, y: 220, w: 3 },
+      { x: 650, y: 200, w: 3 },
+      { x: 950, y: 240, w: 2 },
     ];
 
     for (const plat of platformPositions) {
@@ -171,8 +198,8 @@ export class GameScene extends Phaser.Scene {
 
     // Walls
     for (let y = 0; y < 720; y += 32) {
-      this.platforms.create(16, y, "tile_ground"); // Left wall
-      this.platforms.create(1264, y, "tile_ground"); // Right wall
+      this.platforms.create(16, y, "tile_ground");
+      this.platforms.create(1264, y, "tile_ground");
     }
   }
 

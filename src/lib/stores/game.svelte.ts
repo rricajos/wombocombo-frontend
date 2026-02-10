@@ -7,6 +7,15 @@ export interface ShopItem {
   cost: number;
 }
 
+export interface KillFeedEntry {
+  id: number;
+  message: string;
+  timestamp: number;
+  type: "kill" | "death" | "pickup" | "info";
+}
+
+let killFeedId = 0;
+
 class GameStore {
   // Phase
   phase = $state<GamePhase>("loading");
@@ -35,6 +44,31 @@ class GameStore {
   // Match results
   finalStats = $state<Record<string, unknown> | null>(null);
 
+  // Kill feed / event log
+  killFeed = $state<KillFeedEntry[]>([]);
+
+  // Connection
+  wsConnected = $state<boolean>(false);
+  serverTick = $state<number>(0);
+
+  addKillFeed(message: string, type: KillFeedEntry["type"] = "info") {
+    this.killFeed.push({
+      id: ++killFeedId,
+      message,
+      timestamp: Date.now(),
+      type,
+    });
+    if (this.killFeed.length > 20) {
+      this.killFeed = this.killFeed.slice(-15);
+    }
+  }
+
+  /** Remove expired feed entries (older than 5s) */
+  cleanKillFeed() {
+    const cutoff = Date.now() - 5000;
+    this.killFeed = this.killFeed.filter((e) => e.timestamp > cutoff);
+  }
+
   reset() {
     this.phase = "loading";
     this.health = 100;
@@ -49,6 +83,8 @@ class GameStore {
     this.killedBy = "";
     this.shopItems = [];
     this.finalStats = null;
+    this.killFeed = [];
+    this.serverTick = 0;
   }
 }
 

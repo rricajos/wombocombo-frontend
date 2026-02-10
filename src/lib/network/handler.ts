@@ -5,7 +5,6 @@ import { authStore } from "$lib/stores/auth.svelte";
 import { routerStore } from "$lib/stores/router.svelte";
 
 // Event emitter for Phaser-bound events (game_state, enemy_spawn, etc.)
-// Phaser registers listeners; this handler dispatches to them.
 type GameEventHandler = (message: ServerMessage) => void;
 const gameEventHandlers: Set<GameEventHandler> = new Set();
 
@@ -18,6 +17,10 @@ function emitGameEvent(msg: ServerMessage): void {
   gameEventHandlers.forEach((h) => h(msg));
 }
 
+function getName(playerId: string): string {
+  return lobbyStore.getPlayerName(playerId);
+}
+
 /**
  * Central message dispatcher. Called for every message from the server.
  */
@@ -25,11 +28,15 @@ export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
     // ── Connection ──────────────────────────────────
     case "connected":
+      lobbyStore.setConnectedPlayer(msg.player_id);
+      gameStore.wsConnected = true;
+      gameStore.serverTick = msg.server_tick;
       console.log(`[NET] Connected as ${msg.player_id} at tick ${msg.server_tick}`);
       break;
 
     case "error":
       console.error(`[NET] Server error: ${msg.code} ${msg.message}`);
+      lobbyStore.addSystemMessage(`Error: ${msg.message}`);
       break;
 
     // ── Lobby ───────────────────────────────────────
@@ -40,11 +47,15 @@ export function handleServerMessage(msg: ServerMessage): void {
         avatar_id: "avatar_01",
         ready: false,
       });
+      lobbyStore.addSystemMessage(`${msg.player_name} joined the room`);
       break;
 
-    case "player_left":
+    case "player_left": {
+      const leftName = getName(msg.player_id);
       lobbyStore.removePlayer(msg.player_id);
+      lobbyStore.addSystemMessage(`${leftName} left the room`);
       break;
+    }
 
     case "player_ready_state":
       lobbyStore.setPlayerReady(msg.player_id, msg.ready);
@@ -57,6 +68,10 @@ export function handleServerMessage(msg: ServerMessage): void {
         avatar_id: p.avatar_id,
         ready: p.ready,
       }));
+      // Sync name map
+      for (const p of msg.players) {
+        lobbyStore.playerNames[p.id] = p.name;
+      }
       break;
 
     case "chat_broadcast":
@@ -67,6 +82,7 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "game_start":
       gameStore.phase = "countdown";
       gameStore.round = msg.round;
+      gameStore.addKillFeed(`Round ${msg.round} starting!`, "info");
       routerStore.navigate("game");
       emitGameEvent(msg);
       break;
@@ -74,8 +90,8 @@ export function handleServerMessage(msg: ServerMessage): void {
     // ── Game State (20Hz tick) ──────────────────────
     case "game_state": {
       gameStore.timeLeft = msg.time_left;
+      gameStore.serverTick = msg.tick;
 
-      // Update local player HUD from server state
       const myId = authStore.player?.id;
       const me = msg.players.find((p) => p.id === myId);
       if (me) {
@@ -87,7 +103,6 @@ export function handleServerMessage(msg: ServerMessage): void {
       ).length;
       gameStore.totalPlayers = msg.players.length;
 
-      // Forward to Phaser for entity updates
       emitGameEvent(msg);
       break;
     }
@@ -100,31 +115,57 @@ export function handleServerMessage(msg: ServerMessage): void {
       emitGameEvent(msg);
       break;
 
-    case "player_death":
+    case "player_death": {
+      const deadName = getName(msg.player_id);
       if (msg.player_id === authStore.player?.id) {
         gameStore.phase = "death";
         gameStore.health = 0;
+        gameStore.addKillFeed("You died!", "death");
+      } else {
+        gameStore.addKillFeed(`${deadName} was eliminated`, "death");
       }
       emitGameEvent(msg);
       break;
+    }
 
     case "player_respawn":
       if (msg.player_id === authStore.player?.id) {
         gameStore.phase = "playing";
+        gameStore.addKillFeed("You respawned!", "info");
       }
       emitGameEvent(msg);
       break;
 
     case "enemy_spawn":
-    case "enemy_death":
-    case "item_spawn":
-    case "item_pickup":
       emitGameEvent(msg);
       break;
+
+    case "enemy_death": {
+      const killerName = getName(msg.killed_by);
+      gameStore.addKillFeed(`${killerName} killed a ${msg.enemy_id.split("_")[0] ?? "enemy"}`, "kill");
+      emitGameEvent(msg);
+      break;
+    }
+
+    case "item_spawn":
+      emitGameEvent(msg);
+      break;
+
+    case "item_pickup": {
+      const pickerName = getName(msg.player_id);
+      if (msg.player_id === authStore.player?.id) {
+        gameStore.addKillFeed(`Picked up ${msg.item_id}`, "pickup");
+      } else {
+        gameStore.addKillFeed(`${pickerName} picked up ${msg.item_id}`, "pickup");
+      }
+      emitGameEvent(msg);
+      break;
+    }
 
     // ── Round Flow ──────────────────────────────────
     case "round_end":
       gameStore.phase = "shop";
+      gameStore.addKillFeed("Round over! Shop time.", "info");
       emitGameEvent(msg);
       break;
 
@@ -140,6 +181,9 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "buy_result":
       if (msg.success) {
         gameStore.gold = msg.gold_left;
+        gameStore.addKillFeed(`Purchased ${msg.item_id}`, "pickup");
+      } else {
+        gameStore.addKillFeed("Not enough gold!", "info");
       }
       break;
 

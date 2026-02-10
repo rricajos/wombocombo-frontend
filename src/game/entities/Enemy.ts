@@ -1,7 +1,14 @@
 import Phaser from "phaser";
 import { getEnemyConfig } from "../config/enemies";
-import type { StateSnapshot } from "./RemotePlayer";
 import { NETWORK } from "../config/physics";
+
+interface EnemySnapshot {
+  tick: number;
+  timestamp: number;
+  x: number;
+  y: number;
+  state: string;
+}
 
 /**
  * Enemy sprite synced from server. Uses same interpolation as RemotePlayer.
@@ -9,7 +16,7 @@ import { NETWORK } from "../config/physics";
 export class Enemy extends Phaser.GameObjects.Rectangle {
   enemyId: string;
   enemyType: string;
-  private buffer: StateSnapshot[] = [];
+  private buffer: EnemySnapshot[] = [];
   private healthBar: Phaser.GameObjects.Rectangle;
   private healthBarBg: Phaser.GameObjects.Rectangle;
   private maxHealth: number = 100;
@@ -39,7 +46,7 @@ export class Enemy extends Phaser.GameObjects.Rectangle {
     this.healthBar.setDepth(9);
   }
 
-  pushState(snapshot: StateSnapshot): void {
+  pushState(snapshot: EnemySnapshot): void {
     this.buffer.push(snapshot);
     if (this.buffer.length > NETWORK.SNAPSHOT_BUFFER_SIZE) {
       this.buffer.shift();
@@ -72,8 +79,8 @@ export class Enemy extends Phaser.GameObjects.Rectangle {
 
     const renderTime = Date.now() - NETWORK.INTERPOLATION_DELAY;
 
-    let from: StateSnapshot | null = null;
-    let to: StateSnapshot | null = null;
+    let from: EnemySnapshot | null = null;
+    let to: EnemySnapshot | null = null;
 
     for (let i = 0; i < this.buffer.length - 1; i++) {
       if (

@@ -1,22 +1,28 @@
 import type { ClientMessage, ServerMessage } from "./messages";
+import { gameStore } from "$lib/stores/game.svelte";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 export type MessageHandler = (message: ServerMessage) => void;
+export type StateChangeHandler = (state: ConnectionState) => void;
 
 const HEARTBEAT_INTERVAL = 15_000;
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 class SocketManager {
   private ws: WebSocket | null = null;
   private url: string = "";
   private handlers: Set<MessageHandler> = new Set();
+  private stateHandlers: Set<StateChangeHandler> = new Set();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempt: number = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalClose: boolean = false;
+  private lastPingSent: number = 0;
 
   state: ConnectionState = "disconnected";
   lastError: string = "";
+  latencyMs: number = 0;
 
   connect(roomCode: string, token: string): void {
     this.intentionalClose = false;
@@ -35,14 +41,15 @@ class SocketManager {
       this.ws.close();
     }
 
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
+    this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
     try {
       this.ws = new WebSocket(this.url);
       this.ws.binaryType = "arraybuffer";
 
       this.ws.onopen = () => {
-        this.state = "connected";
+        this.setState("connected");
+        gameStore.wsConnected = true;
         this.reconnectAttempt = 0;
         this.lastError = "";
         this.startHeartbeat();
@@ -51,11 +58,18 @@ class SocketManager {
 
       this.ws.onmessage = (event: MessageEvent) => {
         try {
-          const msg: ServerMessage = JSON.parse(
-            typeof event.data === "string"
-              ? event.data
-              : new TextDecoder().decode(event.data)
-          );
+          const raw = typeof event.data === "string"
+            ? event.data
+            : new TextDecoder().decode(event.data);
+
+          const msg: ServerMessage = JSON.parse(raw);
+
+          // Handle pong for latency
+          if ((msg as Record<string, unknown>).type === "pong") {
+            this.latencyMs = Date.now() - this.lastPingSent;
+            return;
+          }
+
           this.handlers.forEach((handler) => handler(msg));
         } catch (err) {
           console.error("[WS] Parse error:", err);
@@ -64,10 +78,11 @@ class SocketManager {
 
       this.ws.onclose = (event: CloseEvent) => {
         this.stopHeartbeat();
-        this.state = "disconnected";
+        this.setState("disconnected");
+        gameStore.wsConnected = false;
         console.log(`[WS] Closed: ${event.code} ${event.reason}`);
 
-        if (!this.intentionalClose) {
+        if (!this.intentionalClose && this.reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
           this.scheduleReconnect();
         }
       };
@@ -76,9 +91,9 @@ class SocketManager {
         this.lastError = "Connection error";
         console.error("[WS] Error");
       };
-    } catch (err) {
+    } catch {
       this.lastError = "Failed to connect";
-      this.state = "disconnected";
+      this.setState("disconnected");
     }
   }
 
@@ -99,25 +114,35 @@ class SocketManager {
       this.ws = null;
     }
 
-    this.state = "disconnected";
+    this.setState("disconnected");
+    gameStore.wsConnected = false;
     console.log("[WS] Disconnected (intentional)");
   }
 
   onMessage(handler: MessageHandler): () => void {
     this.handlers.add(handler);
-    return () => {
-      this.handlers.delete(handler);
-    };
+    return () => this.handlers.delete(handler);
+  }
+
+  onStateChange(handler: StateChangeHandler): () => void {
+    this.stateHandlers.add(handler);
+    return () => this.stateHandlers.delete(handler);
   }
 
   get isConnected(): boolean {
     return this.state === "connected";
   }
 
+  private setState(state: ConnectionState): void {
+    this.state = state;
+    this.stateHandlers.forEach((h) => h(state));
+  }
+
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
+        this.lastPingSent = Date.now();
         this.ws.send(JSON.stringify({ type: "ping" }));
       }
     }, HEARTBEAT_INTERVAL);
@@ -134,12 +159,9 @@ class SocketManager {
     this.cancelReconnect();
 
     const delay =
-      RECONNECT_DELAYS[
-        Math.min(this.reconnectAttempt, RECONNECT_DELAYS.length - 1)
-      ];
-    console.log(
-      `[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt + 1})`
-    );
+      RECONNECT_DELAYS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+
+    console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt + 1}/${MAX_RECONNECT_ATTEMPTS})`);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectAttempt++;

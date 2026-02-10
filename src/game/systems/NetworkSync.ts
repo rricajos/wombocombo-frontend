@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { RemotePlayer } from "../entities/RemotePlayer";
 import { Enemy } from "../entities/Enemy";
 import { Item } from "../entities/Item";
+import { lobbyStore } from "$lib/stores/lobby.svelte";
 import type {
   ServerMessage,
   ServerGameState,
@@ -15,7 +16,7 @@ import type {
 
 /**
  * Manages all remote entities (remote players, enemies, items).
- * Receives server messages and creates/updates/destroys entities accordingly.
+ * Resolves player names from lobbyStore.playerNames.
  */
 export class NetworkSync {
   private scene: Phaser.Scene;
@@ -29,9 +30,6 @@ export class NetworkSync {
     this.localPlayerId = localPlayerId;
   }
 
-  /**
-   * Handle incoming server message. Called from the game event handler.
-   */
   handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
       case "game_state":
@@ -58,9 +56,6 @@ export class NetworkSync {
     }
   }
 
-  /**
-   * Called every Phaser frame to run interpolation on all remote entities.
-   */
   update(): void {
     this.remotePlayers.forEach((rp) => rp.interpolate());
     this.enemies.forEach((e) => e.interpolate());
@@ -69,17 +64,18 @@ export class NetworkSync {
   private processGameState(state: ServerGameState): void {
     const now = Date.now();
 
-    // Update remote players
+    // ── Remote Players ──
     const activePlayerIds = new Set<string>();
     for (const p of state.players) {
-      if (p.id === this.localPlayerId) continue; // Skip self
+      if (p.id === this.localPlayerId) continue;
 
       activePlayerIds.add(p.id);
 
       let remote = this.remotePlayers.get(p.id);
       if (!remote) {
-        // New player — create sprite
-        remote = new RemotePlayer(this.scene, p.x, p.y, p.id, p.id);
+        // Resolve display name from lobby
+        const name = lobbyStore.getPlayerName(p.id);
+        remote = new RemotePlayer(this.scene, p.x, p.y, p.id, name);
         this.remotePlayers.set(p.id, remote);
       }
 
@@ -88,6 +84,8 @@ export class NetworkSync {
         timestamp: now,
         x: p.x,
         y: p.y,
+        vx: p.vx,
+        vy: p.vy,
         state: p.state,
         facing: p.facing,
       });
@@ -101,7 +99,7 @@ export class NetworkSync {
       }
     }
 
-    // Update enemies
+    // ── Enemies ──
     const activeEnemyIds = new Set<string>();
     for (const e of state.enemies) {
       activeEnemyIds.add(e.id);
@@ -118,12 +116,10 @@ export class NetworkSync {
         x: e.x,
         y: e.y,
         state: e.state,
-        facing: "right",
       });
       enemy.setHealth(e.health);
     }
 
-    // Remove dead enemies not explicitly killed
     for (const [id, enemy] of this.enemies) {
       if (!activeEnemyIds.has(id)) {
         enemy.destroy();
@@ -131,7 +127,7 @@ export class NetworkSync {
       }
     }
 
-    // Update items
+    // ── Items ──
     const activeItemIds = new Set<string>();
     for (const item of state.items) {
       activeItemIds.add(item.id);
@@ -152,13 +148,7 @@ export class NetworkSync {
 
   private spawnEnemy(msg: ServerEnemySpawn): void {
     if (!this.enemies.has(msg.enemy_id)) {
-      const enemy = new Enemy(
-        this.scene,
-        msg.x,
-        msg.y,
-        msg.enemy_id,
-        msg.enemy_type
-      );
+      const enemy = new Enemy(this.scene, msg.x, msg.y, msg.enemy_id, msg.enemy_type);
       this.enemies.set(msg.enemy_id, enemy);
     }
   }
@@ -173,13 +163,7 @@ export class NetworkSync {
 
   private spawnItem(msg: ServerItemSpawn): void {
     if (!this.items.has(msg.item_id)) {
-      const item = new Item(
-        this.scene,
-        msg.x,
-        msg.y,
-        msg.item_id,
-        msg.item_type
-      );
+      const item = new Item(this.scene, msg.x, msg.y, msg.item_id, msg.item_type);
       this.items.set(msg.item_id, item);
     }
   }
@@ -195,18 +179,19 @@ export class NetworkSync {
   private handlePlayerDeath(msg: ServerPlayerDeath): void {
     const remote = this.remotePlayers.get(msg.player_id);
     if (remote) {
-      remote.setTint(0xff0000);
-      remote.setAlpha(0.3);
+      remote.setDead();
     }
   }
 
   private handlePlayerRespawn(msg: ServerPlayerRespawn): void {
     const remote = this.remotePlayers.get(msg.player_id);
     if (remote) {
-      remote.clearTint();
-      remote.setAlpha(0.9);
-      remote.setPosition(msg.x, msg.y);
+      remote.setAlive(msg.x, msg.y);
     }
+  }
+
+  getRemotePlayer(id: string): RemotePlayer | undefined {
+    return this.remotePlayers.get(id);
   }
 
   destroy(): void {
