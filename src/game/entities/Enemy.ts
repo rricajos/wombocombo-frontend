@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { getEnemyConfig } from "../config/enemies";
 import { NETWORK } from "../config/physics";
+import { ENEMY_VISUAL_CONFIG } from "../config/enemies";
 
 interface EnemySnapshot {
   tick: number;
@@ -11,15 +11,21 @@ interface EnemySnapshot {
 }
 
 /**
- * Enemy sprite synced from server. Uses same interpolation as RemotePlayer.
+ * Server-synced enemy with interpolation and health bar.
  */
-export class Enemy extends Phaser.GameObjects.Rectangle {
+export class Enemy extends Phaser.GameObjects.Container {
   enemyId: string;
   enemyType: string;
-  private buffer: EnemySnapshot[] = [];
-  private healthBar: Phaser.GameObjects.Rectangle;
+  private sprite: Phaser.GameObjects.Rectangle;
   private healthBarBg: Phaser.GameObjects.Rectangle;
+  private healthBarFill: Phaser.GameObjects.Rectangle;
+  private nameText: Phaser.GameObjects.Text;
+  private buffer: EnemySnapshot[] = [];
   private maxHealth: number = 100;
+  private currentHealth: number = 100;
+  private targetX: number;
+  private targetY: number;
+  private isDead: boolean = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -28,22 +34,51 @@ export class Enemy extends Phaser.GameObjects.Rectangle {
     enemyId: string,
     enemyType: string
   ) {
-    const config = getEnemyConfig(enemyType);
-    super(scene, x, y, config.width, config.height, config.color);
-
+    super(scene, x, y);
     this.enemyId = enemyId;
     this.enemyType = enemyType;
+    this.targetX = x;
+    this.targetY = y;
+
+    const config = ENEMY_VISUAL_CONFIG[enemyType] ?? ENEMY_VISUAL_CONFIG.slime;
+
+    // Sprite (colored rectangle based on type)
+    this.sprite = scene.add.rectangle(0, 0, config.width, config.height, config.color);
+    this.add(this.sprite);
+
+    // Health bar background
+    this.healthBarBg = scene.add.rectangle(0, -(config.height / 2 + 8), 30, 4, 0x333333);
+    this.add(this.healthBarBg);
+
+    // Health bar fill
+    this.healthBarFill = scene.add.rectangle(0, -(config.height / 2 + 8), 30, 4, 0x44cc44);
+    this.add(this.healthBarFill);
+
+    // Enemy type label
+    this.nameText = scene.add.text(0, -(config.height / 2 + 16), enemyType, {
+      fontSize: "8px",
+      fontFamily: "'Press Start 2P', monospace",
+      color: "#cc6666",
+      stroke: "#000",
+      strokeThickness: 2,
+    });
+    this.nameText.setOrigin(0.5);
+    this.add(this.nameText);
 
     scene.add.existing(this);
     this.setDepth(8);
 
-    // Health bar background
-    this.healthBarBg = scene.add.rectangle(x, y - config.height / 2 - 6, 28, 4, 0x333333);
-    this.healthBarBg.setDepth(8);
-
-    // Health bar fill
-    this.healthBar = scene.add.rectangle(x, y - config.height / 2 - 6, 28, 4, 0x00ff00);
-    this.healthBar.setDepth(9);
+    // Spawn animation
+    this.setAlpha(0);
+    this.setScale(0.3);
+    scene.tweens.add({
+      targets: this,
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 300,
+      ease: "Back.easeOut",
+    });
   }
 
   pushState(snapshot: EnemySnapshot): void {
@@ -53,27 +88,18 @@ export class Enemy extends Phaser.GameObjects.Rectangle {
     }
   }
 
-  setHealth(health: number, maxHealth: number = 100): void {
-    this.maxHealth = maxHealth;
-    const ratio = Math.max(0, health / maxHealth);
-    this.healthBar.setScale(ratio, 1);
-
-    // Color: green → yellow → red
-    if (ratio > 0.5) {
-      this.healthBar.setFillStyle(0x00ff00);
-    } else if (ratio > 0.25) {
-      this.healthBar.setFillStyle(0xffcc00);
-    } else {
-      this.healthBar.setFillStyle(0xff0000);
-    }
-  }
-
   interpolate(): void {
+    if (this.isDead) return;
+
     if (this.buffer.length < 2) {
       if (this.buffer.length === 1) {
-        this.setPosition(this.buffer[0].x, this.buffer[0].y);
+        this.targetX = this.buffer[0].x;
+        this.targetY = this.buffer[0].y;
       }
-      this.updateBarPositions();
+      this.setPosition(
+        Phaser.Math.Linear(this.x, this.targetX, 0.2),
+        Phaser.Math.Linear(this.y, this.targetY, 0.2)
+      );
       return;
     }
 
@@ -95,45 +121,72 @@ export class Enemy extends Phaser.GameObjects.Rectangle {
 
     if (from && to) {
       const range = to.timestamp - from.timestamp;
-      const t = range > 0 ? (renderTime - from.timestamp) / range : 0;
-      const clamped = Math.max(0, Math.min(1, t));
-      this.setPosition(
-        from.x + (to.x - from.x) * clamped,
-        from.y + (to.y - from.y) * clamped
-      );
+      const t = range > 0 ? Math.min(1, Math.max(0, (renderTime - from.timestamp) / range)) : 0;
+      this.targetX = from.x + (to.x - from.x) * t;
+      this.targetY = from.y + (to.y - from.y) * t;
+
+      // Flip based on movement direction
+      if (to.x > from.x) this.sprite.setScale(1, 1);
+      else if (to.x < from.x) this.sprite.setScale(-1, 1);
     } else if (this.buffer.length > 0) {
       const latest = this.buffer[this.buffer.length - 1];
-      this.setPosition(latest.x, latest.y);
+      this.targetX = latest.x;
+      this.targetY = latest.y;
     }
 
-    while (this.buffer.length > 2 && this.buffer[1].timestamp < Date.now() - NETWORK.INTERPOLATION_DELAY) {
+    this.setPosition(
+      Phaser.Math.Linear(this.x, this.targetX, 0.25),
+      Phaser.Math.Linear(this.y, this.targetY, 0.25)
+    );
+
+    // Prune old snapshots
+    while (this.buffer.length > 2 && this.buffer[1].timestamp < renderTime) {
       this.buffer.shift();
     }
-
-    this.updateBarPositions();
   }
 
-  private updateBarPositions(): void {
-    const config = getEnemyConfig(this.enemyType);
-    this.healthBarBg.setPosition(this.x, this.y - config.height / 2 - 6);
-    this.healthBar.setPosition(this.x, this.y - config.height / 2 - 6);
+  setHealth(health: number): void {
+    this.currentHealth = health;
+    const ratio = Math.max(0, health / this.maxHealth);
+    this.healthBarFill.width = 30 * ratio;
+
+    // Color: green → yellow → red
+    if (ratio > 0.5) {
+      this.healthBarFill.fillColor = 0x44cc44;
+    } else if (ratio > 0.25) {
+      this.healthBarFill.fillColor = 0xccaa00;
+    } else {
+      this.healthBarFill.fillColor = 0xcc3333;
+    }
+
+    // Flash red on damage
+    if (ratio < 1) {
+      this.sprite.fillColor = 0xff6666;
+      this.scene.time.delayedCall(100, () => {
+        if (!this.isDead) {
+          const config = ENEMY_VISUAL_CONFIG[this.enemyType] ?? ENEMY_VISUAL_CONFIG.slime;
+          this.sprite.fillColor = config.color;
+        }
+      });
+    }
   }
 
   playDeath(scene: Phaser.Scene): void {
-    // Simple death flash
+    this.isDead = true;
+
     scene.tweens.add({
       targets: this,
       alpha: 0,
       scaleX: 1.5,
       scaleY: 0.2,
-      duration: 200,
+      y: this.y + 10,
+      duration: 300,
+      ease: "Sine.easeIn",
       onComplete: () => this.destroy(),
     });
   }
 
   destroy(fromScene?: boolean): void {
-    this.healthBar?.destroy();
-    this.healthBarBg?.destroy();
     super.destroy(fromScene);
   }
 }

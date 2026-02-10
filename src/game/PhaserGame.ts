@@ -1,6 +1,8 @@
 import Phaser from "phaser";
 import { BootScene } from "./scenes/BootScene";
 import { GameScene } from "./scenes/GameScene";
+import { UIScene } from "./scenes/UIScene";
+import { PHYSICS } from "./config/physics";
 
 let gameInstance: Phaser.Game | null = null;
 
@@ -28,11 +30,11 @@ export function createGame(container: HTMLElement): Phaser.Game {
     physics: {
       default: "arcade",
       arcade: {
-        gravity: { x: 0, y: 0 }, // Gravity per-body, not global
+        gravity: { x: 0, y: PHYSICS.GRAVITY },
         debug: import.meta.env.DEV,
       },
     },
-    scene: [BootScene, GameScene],
+    scene: [BootScene, GameScene, UIScene],
     audio: {
       disableWebAudio: false,
     },

@@ -18,3 +18,6 @@ export function getEnemyConfig(type: string): EnemyConfig {
     ENEMY_CONFIGS[type] ?? { width: 24, height: 24, color: 0xff00ff, speed: 50 }
   );
 }
+
+/** Alias for Entity class visual lookup */
+export const ENEMY_VISUAL_CONFIG = ENEMY_CONFIGS;

@@ -1,13 +1,15 @@
 import Phaser from "phaser";
 import { PHYSICS } from "../config/physics";
+import { getPlayerAnimation } from "../config/animations";
 
 /**
- * Local player sprite with client-side physics and name label.
+ * Local player sprite with client-side physics, name label, and animation.
  */
 export class Player extends Phaser.Physics.Arcade.Sprite {
   private isDead: boolean = false;
   private nameText: Phaser.GameObjects.Text;
   private invulnerable: boolean = false;
+  private prevState: string = "idle";
 
   constructor(scene: Phaser.Scene, x: number, y: number, displayName: string) {
     super(scene, x, y, "player");
@@ -18,7 +20,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     body.setSize(PHYSICS.PLAYER_WIDTH, PHYSICS.PLAYER_HEIGHT);
     body.setCollideWorldBounds(true);
     body.setMaxVelocity(PHYSICS.PLAYER_SPEED, PHYSICS.PLAYER_MAX_FALL);
-    body.setGravityY(PHYSICS.GRAVITY);
+    // Gravity is global now — no per-body override needed
 
     this.setDepth(10);
 
@@ -94,8 +96,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       onComplete: () => {
         this.setAlpha(1);
         this.clearTint();
-        this.invulnerable = false;
       },
+    });
+
+    // Invulnerability timer
+    this.scene.time.delayedCall(PHYSICS.INVULNERABLE_MS, () => {
+      this.invulnerable = false;
     });
   }
 
@@ -130,8 +136,19 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
+
     // Keep name above head
     this.nameText.setPosition(this.x, this.y - 24);
+
+    // Update animation based on state
+    const state = this.getState();
+    if (state !== this.prevState) {
+      this.prevState = state;
+      const animKey = getPlayerAnimation(state);
+      if (this.anims.currentAnim?.key !== animKey) {
+        this.play(animKey, true);
+      }
+    }
   }
 
   destroy(fromScene?: boolean): void {

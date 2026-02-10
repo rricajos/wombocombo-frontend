@@ -65,7 +65,7 @@ class SocketManager {
           const msg: ServerMessage = JSON.parse(raw);
 
           // Handle pong for latency
-          if ((msg as Record<string, unknown>).type === "pong") {
+          if ((msg as unknown as Record<string, unknown>).type === "pong") {
             this.latencyMs = Date.now() - this.lastPingSent;
             return;
           }

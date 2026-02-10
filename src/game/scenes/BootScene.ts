@@ -1,67 +1,87 @@
 import Phaser from "phaser";
-import { registerAnimations } from "../config/animations";
+import { generatePlaceholderSprites, registerAnimations } from "../config/animations";
+import { audioManager } from "../systems/AudioManager";
 
 /**
- * Boot scene — loads all assets, creates placeholder textures, then starts GameScene.
+ * Boot scene — loads assets, generates placeholder textures, initializes audio.
  */
 export class BootScene extends Phaser.Scene {
+  private progressBar!: Phaser.GameObjects.Rectangle;
+  private progressBg!: Phaser.GameObjects.Rectangle;
+  private loadingText!: Phaser.GameObjects.Text;
+
   constructor() {
     super({ key: "BootScene" });
   }
 
   preload(): void {
-    // Loading bar
-    const bar = this.add.rectangle(
-      this.cameras.main.centerX,
-      this.cameras.main.centerY,
-      0,
-      20,
-      0x6c5ce7
-    );
+    const cx = this.cameras.main.centerX;
+    const cy = this.cameras.main.centerY;
+
+    // Loading UI
+    this.cameras.main.setBackgroundColor(0x0a0a1a);
+
+    this.loadingText = this.add.text(cx, cy - 40, "LOADING", {
+      fontSize: "14px",
+      fontFamily: "'Press Start 2P', monospace",
+      color: "#6c5ce7",
+    });
+    this.loadingText.setOrigin(0.5);
+
+    // Progress bar
+    const barW = this.cameras.main.width * 0.5;
+    this.progressBg = this.add.rectangle(cx, cy, barW, 12, 0x222233);
+    this.progressBar = this.add.rectangle(cx - barW / 2, cy, 0, 12, 0x6c5ce7);
+    this.progressBar.setOrigin(0, 0.5);
 
     this.load.on("progress", (value: number) => {
-      bar.width = this.cameras.main.width * 0.6 * value;
+      this.progressBar.width = barW * value;
     });
 
-    // TODO: Load actual assets in Phase 3+
-    // this.load.spritesheet("player", "assets/sprites/player.png", { frameWidth: 32, frameHeight: 32 });
+    // ── Load real assets when available ──
+    // Tilemaps
     // this.load.tilemapTiledJSON("map_arena", "assets/tiles/arena.json");
+    // this.load.tilemapTiledJSON("map_forest", "assets/tiles/forest.json");
+    // this.load.tilemapTiledJSON("map_dungeon", "assets/tiles/dungeon.json");
+
+    // Tilesets
     // this.load.image("tileset_main", "assets/tiles/tileset.png");
+
+    // Spritesheets
+    // this.load.spritesheet("player", "assets/sprites/player.png", { frameWidth: 24, frameHeight: 32 });
+    // this.load.spritesheet("enemies", "assets/sprites/enemies.png", { frameWidth: 32, frameHeight: 32 });
+
+    // Audio
+    // this.load.audio("music_gameplay", "assets/audio/music/gameplay.ogg");
+    // this.load.audio("sfx_jump", "assets/audio/sfx/jump.wav");
+    // this.load.audio("sfx_hit", "assets/audio/sfx/hit.wav");
+
+    // UI
+    // this.load.image("ui_heart", "assets/ui/heart.png");
+
+    // Fonts
+    // this.load.bitmapFont("pixel", "assets/fonts/pixel.png", "assets/fonts/pixel.xml");
   }
 
   create(): void {
-    // Generate placeholder textures
-    this.createPlaceholderTextures();
+    // Generate placeholder textures (replaces real assets until Phase 5)
+    generatePlaceholderSprites(this);
 
     // Register animations
     registerAnimations(this.anims);
 
-    // Start game scene
-    this.scene.start("GameScene");
-  }
+    // Initialize audio system
+    audioManager.init();
 
-  private createPlaceholderTextures(): void {
-    // Player: blue rectangle
-    const playerGfx = this.add.graphics();
-    playerGfx.fillStyle(0x4488ff);
-    playerGfx.fillRect(0, 0, 24, 32);
-    playerGfx.generateTexture("player", 24, 32);
-    playerGfx.destroy();
+    // Clean up loading UI
+    this.progressBar.destroy();
+    this.progressBg.destroy();
+    this.loadingText.destroy();
 
-    // Ground tile: dark gray
-    const tileGfx = this.add.graphics();
-    tileGfx.fillStyle(0x444455);
-    tileGfx.fillRect(0, 0, 32, 32);
-    tileGfx.lineStyle(1, 0x555566);
-    tileGfx.strokeRect(0, 0, 32, 32);
-    tileGfx.generateTexture("tile_ground", 32, 32);
-    tileGfx.destroy();
-
-    // Platform tile: lighter gray
-    const platGfx = this.add.graphics();
-    platGfx.fillStyle(0x555577);
-    platGfx.fillRect(0, 0, 32, 16);
-    platGfx.generateTexture("tile_platform", 32, 16);
-    platGfx.destroy();
+    // Transition to game
+    this.cameras.main.fadeOut(300, 0, 0, 0);
+    this.cameras.main.once("camerafadeoutcomplete", () => {
+      this.scene.start("GameScene");
+    });
   }
 }

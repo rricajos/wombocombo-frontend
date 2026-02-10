@@ -6,6 +6,9 @@
   import { socket } from "$lib/network/socket";
   import { lobbyStore } from "$lib/stores/lobby.svelte";
   import HUD from "$ui/components/HUD.svelte";
+  import Countdown from "$ui/components/Countdown.svelte";
+  import DeathScreen from "$ui/components/DeathScreen.svelte";
+  import Shop from "$ui/components/Shop.svelte";
 
   let containerEl: HTMLDivElement;
 
@@ -42,6 +45,11 @@
 
   <!-- HUD overlay -->
   <HUD />
+
+  <!-- Phase overlays -->
+  <Countdown />
+  <DeathScreen />
+  <Shop />
 
   <!-- Kill feed -->
   {#if gameStore.killFeed.length > 0}
