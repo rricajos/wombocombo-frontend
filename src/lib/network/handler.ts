@@ -13,8 +13,22 @@ export function onGameEvent(handler: GameEventHandler): () => void {
   return () => gameEventHandlers.delete(handler);
 }
 
+/** Clear all game event handlers — call when tearing down the game scene */
+export function clearGameEventHandlers(): void {
+  gameEventHandlers.clear();
+}
+
 function emitGameEvent(msg: ServerMessage): void {
-  gameEventHandlers.forEach((h) => h(msg));
+  gameEventHandlers.forEach((h) => {
+    try {
+      h(msg);
+    } catch (err) {
+      console.warn(
+        "[NET] Game event handler error (scene may not be ready):",
+        err,
+      );
+    }
+  });
 }
 
 function getName(playerId: string): string {
@@ -31,7 +45,9 @@ export function handleServerMessage(msg: ServerMessage): void {
       lobbyStore.setConnectedPlayer(msg.player_id);
       gameStore.wsConnected = true;
       gameStore.serverTick = msg.server_tick;
-      console.log(`[NET] Connected as ${msg.player_id} at tick ${msg.server_tick} (room: ${msg.room_state ?? "unknown"})`);
+      console.log(
+        `[NET] Connected as ${msg.player_id} at tick ${msg.server_tick} (room: ${msg.room_state ?? "unknown"})`,
+      );
       // If reconnecting to a playing room, go straight to game
       if (msg.room_state === "playing" && routerStore.current !== "game") {
         routerStore.navigate("game");
@@ -111,7 +127,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
 
       gameStore.playersAlive = msg.players.filter(
-        (p) => p.state !== "dead"
+        (p) => p.state !== "dead",
       ).length;
       gameStore.totalPlayers = msg.players.length;
 
@@ -154,7 +170,10 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "enemy_death": {
       const killerName = getName(msg.killed_by);
-      gameStore.addKillFeed(`${killerName} killed a ${msg.enemy_id.split("_")[0] ?? "enemy"}`, "kill");
+      gameStore.addKillFeed(
+        `${killerName} killed a ${msg.enemy_id.split("_")[0] ?? "enemy"}`,
+        "kill",
+      );
       emitGameEvent(msg);
       break;
     }
@@ -168,7 +187,10 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (msg.player_id === authStore.player?.id) {
         gameStore.addKillFeed(`Picked up ${msg.item_id}`, "pickup");
       } else {
-        gameStore.addKillFeed(`${pickerName} picked up ${msg.item_id}`, "pickup");
+        gameStore.addKillFeed(
+          `${pickerName} picked up ${msg.item_id}`,
+          "pickup",
+        );
       }
       emitGameEvent(msg);
       break;

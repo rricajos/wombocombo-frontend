@@ -9,7 +9,7 @@ import { audioManager } from "../systems/AudioManager";
 import { loadMap, getSpawnPoint, type MapDefinition } from "../maps/MapLoader";
 import { NETWORK } from "../config/physics";
 import { socket } from "$lib/network/socket";
-import { onGameEvent } from "$lib/network/handler";
+import { onGameEvent, clearGameEventHandlers } from "$lib/network/handler";
 import { authStore } from "$lib/stores/auth.svelte";
 import { gameStore } from "$lib/stores/game.svelte";
 import { lobbyStore } from "$lib/stores/lobby.svelte";
@@ -72,7 +72,11 @@ export class GameScene extends Phaser.Scene {
 
     // ── Camera ──
     this.cameraSystem = new CameraSystem(this);
-    this.cameraSystem.follow(this.localPlayer, this.mapDef.width, this.mapDef.height);
+    this.cameraSystem.follow(
+      this.localPlayer,
+      this.mapDef.width,
+      this.mapDef.height,
+    );
     this.cameraSystem.fadeIn(400);
 
     // ── Input ──
@@ -82,6 +86,8 @@ export class GameScene extends Phaser.Scene {
     this.networkSync = new NetworkSync(this, playerId);
 
     // ── Subscribe to server events ──
+    // Clear any zombie handlers from a previous session
+    clearGameEventHandlers();
     this.unsubGameEvents = onGameEvent((msg: ServerMessage) => {
       this.handleGameEvent(msg);
     });
@@ -97,11 +103,19 @@ export class GameScene extends Phaser.Scene {
 
     // ── Debug text ──
     this.fpsText = this.add
-      .text(8, 8, "", { fontSize: "10px", fontFamily: "monospace", color: "#33cc33" })
+      .text(8, 8, "", {
+        fontSize: "10px",
+        fontFamily: "monospace",
+        color: "#33cc33",
+      })
       .setScrollFactor(0)
       .setDepth(100);
     this.tickText = this.add
-      .text(8, 22, "", { fontSize: "10px", fontFamily: "monospace", color: "#888" })
+      .text(8, 22, "", {
+        fontSize: "10px",
+        fontFamily: "monospace",
+        color: "#888",
+      })
       .setScrollFactor(0)
       .setDepth(100);
   }
@@ -155,8 +169,12 @@ export class GameScene extends Phaser.Scene {
 
     // ── 8. Debug display ──
     if (settingsStore.showFPS) {
-      this.fpsText?.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`).setVisible(true);
-      this.tickText?.setText(`Tick: ${this.localTick} | Srv: ${gameStore.serverTick}`).setVisible(true);
+      this.fpsText
+        ?.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`)
+        .setVisible(true);
+      this.tickText
+        ?.setText(`Tick: ${this.localTick} | Srv: ${gameStore.serverTick}`)
+        .setVisible(true);
     } else {
       this.fpsText?.setVisible(false);
       this.tickText?.setVisible(false);
@@ -277,7 +295,13 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 15; i++) {
       const px = Phaser.Math.Between(50, this.mapDef.width - 50);
       const py = Phaser.Math.Between(50, this.mapDef.height - 100);
-      const dot = this.add.circle(px, py, Phaser.Math.Between(1, 2), 0xffffff, 0.08);
+      const dot = this.add.circle(
+        px,
+        py,
+        Phaser.Math.Between(1, 2),
+        0xffffff,
+        0.08,
+      );
       dot.setDepth(1);
       this.tweens.add({
         targets: dot,
@@ -293,6 +317,7 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.unsubGameEvents?.();
+    clearGameEventHandlers();
     this.networkSync?.destroy();
     this.inputManager?.destroy();
     this.collisionSystem?.destroy();

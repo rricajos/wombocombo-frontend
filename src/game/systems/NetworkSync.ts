@@ -61,7 +61,21 @@ export class NetworkSync {
     this.enemies.forEach((e) => e.interpolate());
   }
 
+  private isSceneReady(): boolean {
+    return !!(
+      this.scene &&
+      this.scene.sys &&
+      this.scene.sys.displayList &&
+      this.scene.sys.settings.active
+    );
+  }
+
   private processGameState(state: ServerGameState): void {
+    // Guard: don't process if the scene is not fully initialized or was destroyed
+    if (!this.isSceneReady()) {
+      return;
+    }
+
     const now = Date.now();
 
     // ── Remote Players ──
@@ -147,8 +161,15 @@ export class NetworkSync {
   }
 
   private spawnEnemy(msg: ServerEnemySpawn): void {
+    if (!this.isSceneReady()) return;
     if (!this.enemies.has(msg.enemy_id)) {
-      const enemy = new Enemy(this.scene, msg.x, msg.y, msg.enemy_id, msg.enemy_type);
+      const enemy = new Enemy(
+        this.scene,
+        msg.x,
+        msg.y,
+        msg.enemy_id,
+        msg.enemy_type,
+      );
       this.enemies.set(msg.enemy_id, enemy);
     }
   }
@@ -162,8 +183,15 @@ export class NetworkSync {
   }
 
   private spawnItem(msg: ServerItemSpawn): void {
+    if (!this.isSceneReady()) return;
     if (!this.items.has(msg.item_id)) {
-      const item = new Item(this.scene, msg.x, msg.y, msg.item_id, msg.item_type);
+      const item = new Item(
+        this.scene,
+        msg.x,
+        msg.y,
+        msg.item_id,
+        msg.item_type,
+      );
       this.items.set(msg.item_id, item);
     }
   }
