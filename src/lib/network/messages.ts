@@ -43,7 +43,9 @@ export type ClientMessage =
 export interface ServerConnected {
   type: "connected";
   player_id: string;
+  player_name: string;
   server_tick: number;
+  room_state?: string;
 }
 
 export interface ServerError {
@@ -134,6 +136,13 @@ export interface ServerGameStart {
   spawn_points: SpawnPoint[];
 }
 
+export interface ServerGameRejoin {
+  type: "game_rejoin";
+  tick: number;
+  round: number;
+  map_data: MapData;
+}
+
 export interface ServerPlayerHit {
   type: "player_hit";
   player_id: string;
@@ -220,6 +229,7 @@ export type ServerMessage =
   | ServerChatBroadcast
   | ServerGameState
   | ServerGameStart
+  | ServerGameRejoin
   | ServerPlayerHit
   | ServerPlayerDeath
   | ServerPlayerRespawn

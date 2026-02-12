@@ -4,6 +4,7 @@
   import { gameStore } from "$lib/stores/game.svelte";
   import { routerStore } from "$lib/stores/router.svelte";
   import { socket } from "$lib/network/socket";
+  import { handleServerMessage } from "$lib/network/handler";
   import { lobbyStore } from "$lib/stores/lobby.svelte";
   import HUD from "$ui/components/HUD.svelte";
   import Countdown from "$ui/components/Countdown.svelte";
@@ -15,6 +16,9 @@
   onMount(() => {
     gameStore.reset();
     createGame(containerEl);
+
+    // Register network handler so game_state, player_hit, etc. are processed
+    const unsubMsg = socket.onMessage(handleServerMessage);
 
     // Clean expired kill feed entries periodically
     const feedTimer = setInterval(() => gameStore.cleanKillFeed(), 1000);
@@ -34,8 +38,11 @@
     return () => {
       window.removeEventListener("keydown", handleKey);
       clearInterval(feedTimer);
+      unsubMsg();
       destroyGame();
       gameStore.reset();
+      // Disconnect socket when leaving game view (back to lobby/results)
+      socket.disconnect();
     };
   });
 </script>

@@ -22,7 +22,8 @@
       return () => {
         unsubMsg();
         unsubState();
-        socket.disconnect();
+        // Do NOT disconnect here — the socket must survive navigation to Game.
+        // socket.disconnect() is called explicitly in leaveRoom() or Game.svelte cleanup.
       };
     }
   });

@@ -31,7 +31,11 @@ export function handleServerMessage(msg: ServerMessage): void {
       lobbyStore.setConnectedPlayer(msg.player_id);
       gameStore.wsConnected = true;
       gameStore.serverTick = msg.server_tick;
-      console.log(`[NET] Connected as ${msg.player_id} at tick ${msg.server_tick}`);
+      console.log(`[NET] Connected as ${msg.player_id} at tick ${msg.server_tick} (room: ${msg.room_state ?? "unknown"})`);
+      // If reconnecting to a playing room, go straight to game
+      if (msg.room_state === "playing" && routerStore.current !== "game") {
+        routerStore.navigate("game");
+      }
       break;
 
     case "error":
@@ -84,6 +88,14 @@ export function handleServerMessage(msg: ServerMessage): void {
       gameStore.round = msg.round;
       gameStore.addKillFeed(`Round ${msg.round} starting!`, "info");
       routerStore.navigate("game");
+      emitGameEvent(msg);
+      break;
+
+    // ── Game Rejoin (reconnected to a playing room) ──
+    case "game_rejoin":
+      gameStore.phase = "playing";
+      gameStore.serverTick = msg.tick;
+      console.log(`[NET] Rejoined game at tick ${msg.tick}`);
       emitGameEvent(msg);
       break;
 
